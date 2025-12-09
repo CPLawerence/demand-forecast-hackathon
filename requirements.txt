@@ -1,0 +1,29 @@
+# Data manipulation
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Forecasting libraries
+prophet>=1.1.0
+statsmodels>=0.14.0
+scikit-learn>=1.3.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
+
+# Database connectivity
+snowflake-connector-python>=3.0.0
+sqlalchemy>=2.0.0
+snowflake-sqlalchemy>=1.5.0
+
+# DBT
+dbt-snowflake>=1.4.0
+
+# Jupyter
+jupyterlab>=4.0.0
+ipykernel>=6.0.0
+
+# Environment management
+python-dotenv>=1.0.0

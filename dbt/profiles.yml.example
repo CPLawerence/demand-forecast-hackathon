@@ -1,0 +1,17 @@
+# DBT Profile Configuration
+# Copy this file to ~/.dbt/profiles.yml (or merge with existing)
+# Uses environment variables from your .env file
+
+demand_forecast:
+    outputs:
+        default:
+            type: snowflake
+            threads: "{{ env_var('SNOWFLAKE_THREADS') | int }}"
+            account: "{{ env_var('SNOWFLAKE_ACCT') }}"
+            user: "{{ env_var('SNOWFLAKE_USER') }}"
+            password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+            role: dataworkers
+            database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+            warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'etl_warehouse') }}"
+            schema: "{{ env_var('SNOWFLAKE_SCHEMA') }}"
+    target: default
