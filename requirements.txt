@@ -2,6 +2,11 @@
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
+python-dateutil>=2.8.0
+
+# Excel file handling
+xlsxwriter>=3.0.0
+openpyxl>=3.1.0
 
 # Forecasting libraries
 prophet>=1.1.0
