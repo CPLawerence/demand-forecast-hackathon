@@ -1,17 +1,24 @@
 import pandas as pd
 import numpy as np
+import os
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-# File paths
-base_path = r'C:\Users\JaeheeKim\Burrow\Burrow - 19. INVENTORY\06_Analysis + Reporting\_Jaehee\Hackathon'
-catalog_file = f'{base_path}\\catalog_2025-12-09-1340.csv'
-inventory_file = f'{base_path}\\on hand inventory_2025-12-09-1341.csv'
-sales_file = f'{base_path}\\sku sales_2025-12-09-1347.csv'
-on_order_file = f'{base_path}\\CZ On Order Sample Data.xlsx'
-output_file = f'{base_path}\\Demand_Forecast_Inventory_Model.xlsx'
+# Get the directory where this script is located
+base_path = os.path.dirname(os.path.abspath(__file__))
+
+# File paths (relative to repository root)
+catalog_file = os.path.join(base_path, 'catalog_2025-12-09-1340.csv')
+inventory_file = os.path.join(base_path, 'on hand inventory_2025-12-09-1341.csv')
+sales_file = os.path.join(base_path, 'sku sales_2025-12-09-1347.csv')
+on_order_file = os.path.join(base_path, 'CZ On Order Sample Data.xlsx')
+output_file = os.path.join(base_path, 'Demand_Forecast_Inventory_Model.xlsx')
+
+# ROS and Curve data files
+ros_file = os.path.join(base_path, 'CZ Sample ROS Data.csv')
+curve_file = os.path.join(base_path, 'CZ Sample Curve data.xlsx')
 
 print("Loading data files...")
 
@@ -32,13 +39,35 @@ sales['ORDER_MONTH'] = pd.to_datetime(sales['ORDER_MONTH'])
 on_order = pd.read_excel(on_order_file)
 print(f"On-order columns: {on_order.columns.tolist()}")
 
+# Load ROS data (daily rate of sale)
+ros_data = pd.read_csv(ros_file)
+ros_data.columns = ros_data.columns.str.strip()
+ros_data['VARIANT_SKU'] = ros_data['VARIANT_SKU'].str.strip()
+# Convert ROS to numeric, treating '-' and blanks as 0
+ros_data['NORMALIZED_ROS'] = pd.to_numeric(ros_data['NORMALIZED_ROS'], errors='coerce').fillna(0)
+# Create a lookup dictionary for ROS by SKU
+ros_lookup = dict(zip(ros_data['VARIANT_SKU'], ros_data['NORMALIZED_ROS']))
+print(f"Loaded ROS data for {len(ros_lookup)} SKUs")
+
+# Load Curve data (monthly sales curve by planning category)
+curve_data = pd.read_excel(curve_file)
+# Column B is the planning category
+curve_data = curve_data.rename(columns={'Gross Item Finance Forecast CURVE': 'PLANNING_CATEGORY'})
+# Set planning category as index for easy lookup
+curve_data = curve_data.set_index('PLANNING_CATEGORY')
+# Drop any unnamed columns (check if column name contains 'Unnamed' as string)
+curve_data = curve_data.loc[:, [col for col in curve_data.columns if 'Unnamed' not in str(col)]]
+# Convert column names to datetime for easier matching
+curve_data.columns = pd.to_datetime(curve_data.columns)
+print(f"Loaded Curve data for {len(curve_data)} planning categories: {curve_data.index.tolist()}")
+
 # Determine current date and forecast horizon
 current_date = datetime(2025, 12, 1)
 history_start = datetime(2023, 1, 1)
-forecast_months = 6  # Forecast 6 months ahead
+forecast_end = datetime(2026, 12, 1)  # Forecast through end of 2026
 
 # Create month range for historical + forecast
-all_months = pd.date_range(start=history_start, end=current_date + relativedelta(months=forecast_months), freq='MS')
+all_months = pd.date_range(start=history_start, end=forecast_end, freq='MS')
 historical_months = [m for m in all_months if m <= current_date]
 forecast_months_list = [m for m in all_months if m > current_date]
 
@@ -54,19 +83,107 @@ sales_pivot = sales_agg.pivot(index='SKU', columns='MONTH', values='SALES_DEMAND
 # Get all unique SKUs from catalog
 all_skus = catalog['SKU'].unique()
 
-# Calculate average monthly sales for each SKU (for forecasting)
-def calculate_forecast(sku_sales_series, forecast_periods=6):
-    """Calculate forecast using simple moving average of last 6 months with data"""
-    # Get non-zero values
-    non_zero_sales = sku_sales_series[sku_sales_series > 0]
-    if len(non_zero_sales) >= 3:
-        # Use average of last 6 months with sales
-        avg_sales = non_zero_sales.tail(6).mean()
-    elif len(non_zero_sales) > 0:
-        avg_sales = non_zero_sales.mean()
-    else:
-        avg_sales = 0
-    return avg_sales
+# Mapping from detailed planning categories to curve categories
+PLANNING_CATEGORY_TO_CURVE = {
+    # ACCENTS
+    'ACCENTS - BOOKS': 'ACCENTS',
+    'ACCENTS - CANDLE & DEC-ACC': 'ACCENTS',
+    'ACCENTS - ART': 'ACCENTS',
+    'ACCENTS - MIRRORS': 'ACCENTS',
+    'ACCENTS - WALL HANGINGS': 'ACCENTS',
+    'ACCENTS - PLANTERS & VASES': 'ACCENTS',
+    'ACCENTS - MTO': 'ACCENTS',
+    # BASKETS
+    'BASKETS': 'BASKETS',
+    # BATH
+    'BATH - TOWELS': 'BATH',
+    'BATH - BATH ROBES': 'BATH',
+    'BATH - ACCESSORIES': 'BATH',
+    'BATH - MATS': 'BATH',
+    # BEDDING
+    'BEDDING - SHEETS ETC.': 'BEDDING',
+    'BEDDING - QUILTS ETC.': 'BEDDING',
+    'BEDDING - BED BLANKETS': 'BEDDING',
+    'BEDDING - DUVETS': 'BEDDING',
+    'BEDDING - SWATCH': 'BEDDING',
+    'BEDDING - INSERTS': 'BEDDING',
+    # BLANKETS
+    'BLANKETS - THROWS': 'BLANKETS',
+    # FURNITURE
+    'FURNITURE - STOCKED': 'FURNITURE',
+    'FURNITURE - MTO': 'FURNITURE - MTO',
+    'FURNITURE - SWATCH': 'FURNITURE',
+    # PILLOWS
+    'PILLOWS - ACCENT': 'PILLOWS',
+    'PILLOWS - OVERSIZED LUMBARS': 'PILLOWS',
+    # RUGS
+    'RUGS - AREA + ROUND': 'RUGS',
+    'RUGS - ACCENT': 'RUGS',
+    'RUGS - RUNNERS': 'RUGS',
+    'RUGS - MISC': 'RUGS',
+    # TABLEWARE
+    'TABLEWARE': 'TABLEWARE',
+    # OTHER
+    'HOLIDAY': 'ACCENTS',  # Map to ACCENTS as closest match
+    'Z. MISC': 'ACCENTS',  # Map to ACCENTS as default
+}
+
+def get_curve_category(planning_category):
+    """Map detailed planning category to curve category"""
+    if planning_category in PLANNING_CATEGORY_TO_CURVE:
+        return PLANNING_CATEGORY_TO_CURVE[planning_category]
+    # Try to match by prefix (e.g., "BEDDING - XXX" -> "BEDDING")
+    for curve_cat in ['ACCENTS', 'BASKETS', 'BATH', 'BEDDING', 'BLANKETS', 'FURNITURE', 'PILLOWS', 'RUGS', 'TABLEWARE']:
+        if planning_category and planning_category.startswith(curve_cat):
+            return curve_cat
+    return None
+
+def calculate_forecast(sku, planning_category, forecast_month, ros_lookup, curve_data):
+    """
+    Calculate forecast for a SKU using:
+    1. ROS (Rate of Sale) data - daily ROS converted to monthly (daily × 30)
+    2. Monthly sales curve applied to adjust for seasonality
+
+    Args:
+        sku: The SKU identifier
+        planning_category: The planning category for curve lookup
+        forecast_month: The month to forecast (datetime)
+        ros_lookup: Dictionary of SKU -> daily ROS
+        curve_data: DataFrame with monthly curve percentages by planning category
+
+    Returns:
+        Monthly forecasted units
+    """
+    # Get daily ROS for this SKU
+    daily_ros = ros_lookup.get(sku, 0)
+
+    # Convert daily ROS to base monthly units (daily × 30 days)
+    base_monthly_units = daily_ros * 30
+
+    # Apply the monthly sales curve for seasonality adjustment
+    # The curve represents the proportion of annual sales for each month
+    # We need to adjust the base monthly forecast by comparing the month's curve to average (1/12)
+    curve_adjustment = 1.0  # Default to no adjustment if no curve found
+
+    # Map detailed planning category to curve category
+    curve_category = get_curve_category(planning_category)
+
+    if curve_category and curve_category in curve_data.index:
+        # Find the matching month in the curve data (match by month number)
+        forecast_month_num = forecast_month.month
+        for curve_col in curve_data.columns:
+            if curve_col.month == forecast_month_num:
+                # Get the curve percentage for this month
+                month_curve_pct = curve_data.loc[curve_category, curve_col]
+                # Calculate adjustment: curve_pct / (1/12) = curve_pct * 12
+                # This scales the base monthly forecast up/down based on seasonality
+                curve_adjustment = month_curve_pct * 12
+                break
+
+    # Calculate monthly forecast: base monthly units × curve adjustment
+    monthly_forecast = base_monthly_units * curve_adjustment
+
+    return monthly_forecast
 
 # Merge catalog with inventory
 sku_master = catalog.merge(inventory, on='SKU', how='left')
@@ -217,11 +334,30 @@ for category in planning_categories:
 
     # Month headers
     month_start_col = len(sku_detail_cols)
+
+    # Track column ranges for 2023 and 2024 for grouping
+    col_2023_start = None
+    col_2023_end = None
+    col_2024_start = None
+    col_2024_end = None
+
     for month_idx, month in enumerate(all_months):
         month_str = month.strftime('%b %Y')
         is_forecast = month > current_date
         fmt = forecast_format if is_forecast else header_format
         worksheet.write(0, month_start_col + month_idx, month_str, header_format)
+
+        # Track 2023 columns
+        if month.year == 2023:
+            if col_2023_start is None:
+                col_2023_start = month_start_col + month_idx
+            col_2023_end = month_start_col + month_idx
+
+        # Track 2024 columns
+        if month.year == 2024:
+            if col_2024_start is None:
+                col_2024_start = month_start_col + month_idx
+            col_2024_end = month_start_col + month_idx
 
     # Set column widths
     worksheet.set_column(0, 0, 15)  # Category
@@ -233,11 +369,18 @@ for category in planning_categories:
     worksheet.set_column(6, 6, 12)  # Size
     worksheet.set_column(month_start_col, month_start_col + len(all_months), 10)  # Month columns
 
+    # Group and collapse 2023 and 2024 columns
+    if col_2023_start is not None and col_2023_end is not None:
+        worksheet.set_column(col_2023_start, col_2023_end, 10, None, {'level': 1, 'hidden': True})
+    if col_2024_start is not None and col_2024_end is not None:
+        worksheet.set_column(col_2024_start, col_2024_end, 10, None, {'level': 1, 'hidden': True})
+
     current_row = 1
 
     # Process each SKU
     for _, sku_row in category_skus.iterrows():
         sku = sku_row['SKU']
+        planning_cat = sku_row.get('PLANNING_CATEGORY', '')
 
         # Get SKU details
         sku_details = [
@@ -261,9 +404,6 @@ for category in planning_categories:
         else:
             sku_sales = pd.Series(0, index=all_months)
 
-        # Calculate forecast
-        forecast_value = calculate_forecast(sku_sales)
-
         # Build data for each row type
         sales_demand_data = []
         committed_data = []
@@ -280,7 +420,8 @@ for category in planning_categories:
 
             # Sales Demand
             if is_forecast_month:
-                demand = round(forecast_value)
+                # Use ROS and Curve data for forecast months
+                demand = round(calculate_forecast(sku, planning_cat, month, ros_lookup, curve_data))
             else:
                 demand = sku_sales.get(month, 0) if month in sku_sales.index else 0
             sales_demand_data.append(demand)

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(start \"\" \"C:\\Users\\JaeheeKim\\Burrow\\Burrow - 19. INVENTORY\\06_Analysis + Reporting\\_Jaehee\\Hackathon\\Demand_Forecast_Inventory_Model.xlsx\")",
+      "Bash(start \"\" \"C:\\Users\\JaeheeKim\\demand-forecast-hackathon-1\\Demand_Forecast_Inventory_Model.xlsx\")"
+    ]
+  }
+}
